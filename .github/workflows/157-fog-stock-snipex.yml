@@ -15,40 +15,102 @@ jobs:
       - name: Setup Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison build-essential ccache curl flex \
-            git gnupg gperf libelf-dev libncurses5-dev libssl-dev lzop make \
-            optipng pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev libtinfo5
+          sudo apt-get install -y \
+            bc bison build-essential ccache curl flex \
+            git gnupg gperf libelf-dev libncurses5-dev libssl-dev \
+            lzop make rsync schedtool squashfs-tools xsltproc \
+            zip zlib1g-dev libtinfo5 wget
 
-      - name: Download AOSP Toolchains (Clang + Binutils)
+      - name: Download AOSP Toolchains
+        shell: bash
         run: |
+          set -e
+
           mkdir -p clang gcc64 gcc32
-          
-          # AOSP Clang r383902
-          curl -fLO https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-11.0.0_r35/clang-r383902.tar.gz
-          tar -xf clang-r383902.tar.gz -C clang
-          rm -f clang-r383902.tar.gz
 
-          # AOSP GCC 64-bit (Binutils)
-          curl -fLO https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/android-11.0.0_r35.tar.gz
-          tar -xf android-11.0.0_r35.tar.gz -C gcc64
-          rm -f android-11.0.0_r35.tar.gz
+          download_and_extract() {
+            URL="$1"
+            ARCHIVE="$2"
+            DEST="$3"
 
-          # AOSP GCC 32-bit (Binutils)
-          curl -fLO https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/tags/android-11.0.0_r35.tar.gz
-          tar -xf android-11.0.0_r35.tar.gz -C gcc32
-          rm -f android-11.0.0_r35.tar.gz
+            for i in 1 2 3 4 5; do
+              echo "=========================================="
+              echo "Download attempt $i/5"
+              echo "$ARCHIVE"
+              echo "=========================================="
 
-      - name: Build 157-fog-stock-snipex
+              rm -f "$ARCHIVE"
+
+              wget \
+                --server-response \
+                --tries=3 \
+                --timeout=60 \
+                --waitretry=10 \
+                --retry-on-http-error=408,429,500,502,503,504 \
+                -O "$ARCHIVE" \
+                "$URL" || true
+
+              if [ -f "$ARCHIVE" ]; then
+                echo "Checking archive..."
+
+                if tar -tzf "$ARCHIVE" >/dev/null 2>&1; then
+                  echo "Archive OK!"
+                  tar -xzf "$ARCHIVE" -C "$DEST"
+                  rm -f "$ARCHIVE"
+                  return 0
+                fi
+
+                echo "Archive is incomplete/corrupt. Retrying..."
+              fi
+
+              rm -f "$ARCHIVE"
+              sleep 5
+            done
+
+            echo "ERROR: Failed to download a valid archive."
+            exit 1
+          }
+
+          # Clang 10.0.7 / AOSP Clang r383902
+          download_and_extract \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-11.0.0_r35/clang-r383902.tar.gz" \
+            "clang-r383902.tar.gz" \
+            "clang"
+
+          # AArch64 GCC 4.9
+          download_and_extract \
+            "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/android-11.0.0_r35.tar.gz" \
+            "gcc64.tar.gz" \
+            "gcc64"
+
+          # ARM 32-bit GCC 4.9
+          download_and_extract \
+            "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/tags/android-11.0.0_r35.tar.gz" \
+            "gcc32.tar.gz" \
+            "gcc32"
+
+      - name: Build Kernel
         run: |
           export PATH="${GITHUB_WORKSPACE}/clang/bin:${GITHUB_WORKSPACE}/gcc64/bin:${GITHUB_WORKSPACE}/gcc32/bin:$PATH"
+
           export ARCH=arm64
           export SUBARCH=arm64
 
-          # Defconfig Load
-          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- fog-stock_defconfig
+          echo "=== Compiler ==="
+          clang --version
 
-          # Compile Only Image.gz
-          make -j$(nproc --all) O=out \
+          echo "=== Load defconfig ==="
+          make O=out \
+            ARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            fog-stock_defconfig
+
+          echo "=== Build Image.gz ==="
+          make -j$(nproc --all) \
+            O=out \
             ARCH=arm64 \
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -56,9 +118,13 @@ jobs:
             CROSS_COMPILE_ARM32=arm-linux-androideabi- \
             Image.gz
 
+      - name: Verify Image.gz
+        run: |
+          ls -lh out/arch/arm64/boot/Image.gz
+          file out/arch/arm64/boot/Image.gz
+
       - name: Upload Kernel Artifact
         uses: actions/upload-artifact@v4
         with:
           name: 157-fog-stock-snipex--Output
           path: out/arch/arm64/boot/Image.gz
-          
