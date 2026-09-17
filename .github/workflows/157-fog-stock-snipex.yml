@@ -1,11 +1,11 @@
-name: 157-fog-stock-snipex
+name: fog-stock-snipex-tg@Violence333
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build 157-fog-stock-snipex
+    name: Build fog-stock-snipex-tg@Violence333
     runs-on: ubuntu-22.04
 
     steps:
@@ -126,5 +126,5 @@ jobs:
       - name: Upload Kernel Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 157-fog-stock-snipex--Output
+          name: 157-fog-stock-snipex-tg@Violence333
           path: out/arch/arm64/boot/Image.gz
